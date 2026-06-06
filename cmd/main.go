@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 )
@@ -35,12 +34,14 @@ func (c *GerritClient) DecodeResponse(resp *http.Response, v any) error {
 func NewGerritClient() *GerritClient {
 	host := os.Getenv(HostEnv)
 	if host == "" {
-		log.Fatalf("Environment variable %s cannot be empty", HostEnv)
+		fmt.Printf("Environment variable %s cannot be empty\n", HostEnv)
+		os.Exit(1)
 	}
 
 	username := os.Getenv(UsernameEnv)
 	if username == "" {
-		log.Fatalf("Environment variable %s cannot be empty", UsernameEnv)
+		fmt.Printf("Environment variable %s cannot be empty\n", UsernameEnv)
+		os.Exit(1)
 	}
 
 	password, _ := GetPassword(host, username) // Ignore error.  It's okay if password is empty
@@ -114,14 +115,16 @@ func handleLogin(client *GerritClient) {
 
 	err := SavePassword(client.host, client.username, password)
 	if err != nil {
-		log.Fatalf("Error saving password to OS keyring: %s", err.Error())
+		fmt.Printf("Error saving password to OS keyring: %s\n", err.Error())
+		os.Exit(1)
 	}
 
 	client.password = password
 
 	accountInfo, err := getAccountInfo(client)
 	if err != nil {
-		log.Fatalf("Error logging in: %s", err.Error())
+		fmt.Printf("Error logging in: %s\n", err.Error())
+		os.Exit(1)
 	}
 	fmt.Printf("Logged in as %s\n", accountInfo.Name)
 }
@@ -129,7 +132,8 @@ func handleLogin(client *GerritClient) {
 func handleLogout(client *GerritClient) {
 	err := DeletePasswordFor(client.host, client.username)
 	if err != nil {
-		log.Fatalf("Error deleting password from OS keyring: %s", err.Error())
+		fmt.Printf("Error deleting password from OS keyring: %s\n", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Println("Logged out")
@@ -138,7 +142,8 @@ func handleLogout(client *GerritClient) {
 func handleGetMe(client *GerritClient) {
 	accountInfo, err := getAccountInfo(client)
 	if err != nil {
-		log.Fatalf("Error getting account info: %s", err.Error())
+		fmt.Printf("Error getting account info: %s\n", err.Error())
+		os.Exit(1)
 	}
 	accountInfo.Print()
 }
@@ -146,7 +151,8 @@ func handleGetMe(client *GerritClient) {
 func handleNuke() {
 	err := DeleteAllPasswords()
 	if err != nil {
-		log.Fatalf("Error nuking passwords: %s", err.Error())
+		fmt.Printf("Error nuking passwords: %s\n", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Println("All passwords removed from OS keyring")
@@ -156,7 +162,8 @@ func main() {
 	flag.Parse()
 
 	if len(flag.Args()) == 0 {
-		log.Fatalln("Subcommand required [inbox|login|me]")
+		fmt.Println("Subcommand required [inbox|login|me]")
+		os.Exit(1)
 	}
 
 	switch cmd := flag.Arg(0); cmd {
@@ -174,6 +181,7 @@ func main() {
 		client := NewGerritClient()
 		handleGetMe(client)
 	default:
-		log.Fatalf("Unsupported subcommand: %s", cmd)
+		fmt.Printf("Unsupported subcommand: %s\n", cmd)
+		os.Exit(1)
 	}
 }
