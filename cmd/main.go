@@ -1,108 +1,29 @@
 package main
 
 import (
-	"bufio"
-	"crypto/tls"
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 )
 
-var (
-	HostEnv       = "GERRIT_HOST"
-	UsernameEnv   = "GERRIT_USER"
-	SkipVerifyTLS = "GERRIT_SKIP_VERIFY_TLS"
-)
-
-type GerritClient struct {
-	host       string
-	username   string
-	password   string
-	httpClient *http.Client
-}
-
-func (c *GerritClient) DecodeResponse(resp *http.Response, v any) error {
-	reader := bufio.NewReader(resp.Body)
-	reader.ReadString('\n')
-	return json.NewDecoder(reader).Decode(v)
-}
-
-func NewGerritClient() *GerritClient {
-	host := os.Getenv(HostEnv)
-	if host == "" {
-		fmt.Printf("Environment variable %s cannot be empty\n", HostEnv)
-		os.Exit(1)
-	}
-
-	username := os.Getenv(UsernameEnv)
-	if username == "" {
-		fmt.Printf("Environment variable %s cannot be empty\n", UsernameEnv)
-		os.Exit(1)
-	}
-
-	password, _ := GetPassword(host, username) // Ignore error.  It's okay if password is empty
-
-	return &GerritClient{
-		host,
-		username,
-		password,
-		&http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: os.Getenv(SkipVerifyTLS) == "1",
-				},
-			},
-		},
-	}
-}
-
-type AccountInfo struct {
-	AccountID int    `json:"_account_id"`
-	Name      string `json:"name"`
-	Email     string `json:"email"`
-	Username  string `json:"username"`
-}
-
-func (a *AccountInfo) Print() {
+func printAccountInfo(a *AccountInfo) {
 	fmt.Printf("%-11s %d\n%-11s %s\n%-11s %s\n%-11s %s\n", "Account ID:", a.AccountID, "Name:", a.Name, "Email:", a.Email, "Username:", a.Username)
 }
 
-func getAccountInfo(client *GerritClient) (*AccountInfo, error) {
-	url := "https://" + client.host + "/a/accounts/self"
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
+func accountDisplayName(a AccountInfo) string {
+	if a.Name != "" {
+		return a.Name
 	}
-
-	req.SetBasicAuth(client.username, client.password)
-
-	resp, err := client.httpClient.Do(req)
-	if err != nil {
-		return nil, err
+	if a.Username != "" {
+		return a.Username
 	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		responseBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New(string(responseBody))
+	if a.Email != "" {
+		return a.Email
 	}
-
-	var accountInfo AccountInfo
-
-	err = client.DecodeResponse(resp, &accountInfo)
-	if err != nil {
-		return nil, err
+	if a.AccountID != 0 {
+		return fmt.Sprintf("%d", a.AccountID)
 	}
-
-	return &accountInfo, nil
+	return ""
 }
 
 func handleLogin(client *GerritClient) {
@@ -121,7 +42,7 @@ func handleLogin(client *GerritClient) {
 
 	client.password = password
 
-	accountInfo, err := getAccountInfo(client)
+	accountInfo, err := client.GetAccountInfo()
 	if err != nil {
 		fmt.Printf("Error logging in: %s\n", err.Error())
 		os.Exit(1)
@@ -140,12 +61,13 @@ func handleLogout(client *GerritClient) {
 }
 
 func handleGetMe(client *GerritClient) {
-	accountInfo, err := getAccountInfo(client)
+	accountInfo, err := client.GetAccountInfo()
 	if err != nil {
 		fmt.Printf("Error getting account info: %s\n", err.Error())
 		os.Exit(1)
 	}
-	accountInfo.Print()
+
+	printAccountInfo(accountInfo)
 }
 
 func handleNuke() {
@@ -158,17 +80,50 @@ func handleNuke() {
 	fmt.Println("All passwords removed from OS keyring")
 }
 
+const (
+	ChangeIDField = "Change ID"
+	SubjectField  = "Subject"
+	OwnerField    = "Owner"
+)
+
+func handleChanges(client *GerritClient) {
+	changes, err := client.GetChanges()
+	if err != nil {
+		fmt.Printf("Error retrieving changes: %s\n", err.Error())
+		os.Exit(1)
+	}
+
+	longestChangeID := len(ChangeIDField)
+	longestSubject := len(SubjectField)
+	longestOwner := len(OwnerField)
+
+	for _, change := range changes {
+		longestChangeID = max(longestChangeID, len(change.ChangeID))
+		longestSubject = max(longestSubject, len(change.Subject))
+		longestOwner = max(longestOwner, len(accountDisplayName(change.Owner)))
+	}
+
+	fmt.Printf("%-*s %-*s %-*s\n", longestChangeID, ChangeIDField, longestSubject, SubjectField, longestOwner, OwnerField)
+
+	for _, change := range changes {
+		fmt.Printf("%-*s %-*s %-*s\n", longestChangeID, change.ChangeID, longestSubject, change.Subject, longestOwner, accountDisplayName(change.Owner))
+	}
+}
+
 func main() {
 	flag.Parse()
 
 	if len(flag.Args()) == 0 {
-		fmt.Println("Subcommand required [inbox|login|me]")
+		fmt.Println("Subcommand required [inbox|changes|login|logout|nuke|me]")
 		os.Exit(1)
 	}
 
 	switch cmd := flag.Arg(0); cmd {
 	case "inbox":
 		fmt.Println("Doing inbox things")
+	case "changes":
+		client := NewGerritClient()
+		handleChanges(client)
 	case "login":
 		client := NewGerritClient()
 		handleLogin(client)
